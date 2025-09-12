@@ -24,7 +24,7 @@ body, html, #root {
   flex: 1;
   width: 100%;
   height: calc(100vh - 50px); /* Adjust for header height */
-  z-index: 0; /* Ensure map is below potential popups/modals */
+  z-index: 0;
 }
 
 /* Simple header */
@@ -35,7 +35,7 @@ body, html, #root {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  z-index: 1000; /* Header on top */
+  z-index: 1000;
 }
 
 .header h1 {
@@ -48,30 +48,22 @@ body, html, #root {
   opacity: 0.8;
 }
 
-/* Aircraft marker styles */
+/* --- Aircraft Marker Styles --- */
+/* Styles for the DivIcon containing the SVG */
 .aircraft-marker {
-  background-color: #3498db;
-  border: 2px solid white;
-  border-radius: 50%;
-  width: 12px;
-  height: 12px;
-  box-shadow: 0 0 5px rgba(0,0,0,0.5);
-  cursor: pointer;
+  background-color: transparent;
+  border: none;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 10px;
-  color: white;
-  font-weight: bold;
+  cursor: pointer;
+  /* Optional: Add a subtle shadow */
+  /* filter: drop-shadow(0 0 2px rgba(0,0,0,0.5)); */
 }
 
-.aircraft-marker:hover {
-  background-color: #2980b9;
-  transform: scale(1.2);
-  transition: transform 0.2s ease;
-}
-
-/* Basic Popup Styling (if using Leaflet's built-in) */
+/* Basic Popup Styling */
 .leaflet-popup-content {
   margin: 5px;
   font-size: 0.85em;
@@ -84,3 +76,29 @@ body, html, #root {
 .leaflet-popup-content p {
   margin: 2px 0;
 }
+
+/* --- Marker Cluster Styles (Imported CSS) --- */
+/* The library provides default styles. You can customize them here if needed. */
+/* Example: Change cluster colors */
+/*
+.marker-cluster-small {
+  background-color: rgba(181, 226, 140, 0.6);
+}
+.marker-cluster-small div {
+  background-color: rgba(110, 204, 57, 0.6);
+}
+
+.marker-cluster-medium {
+  background-color: rgba(241, 211, 87, 0.6);
+}
+.marker-cluster-medium div {
+  background-color: rgba(240, 194, 12, 0.6);
+}
+
+.marker-cluster-large {
+  background-color: rgba(253, 156, 115, 0.6);
+}
+.marker-cluster-large div {
+  background-color: rgba(241, 128, 23, 0.6);
+}
+*/
