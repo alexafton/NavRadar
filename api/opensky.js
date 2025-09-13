@@ -1,23 +1,20 @@
-const https = require('https');
+// ESM / Fetch-based Vercel-friendly API route for proxying OpenSky
+// This file is placed in the /api directory and will be served by Vercel at /api/opensky.
+export default async function handler(req, res) {
+  const OPENSKY_URL = 'https://opensky-network.org/api/states/all';
 
-// Very small proxy for Vercel serverless functions. It fetches OpenSky and returns raw JSON.
-// NOTE: Rate limits still apply; use responsibly. If you deploy to Vercel, this file will be
-// available under /.netlify/functions/... or /api/opensky depending on the provider. Vercel
-// will map this to /api/opensky automatically when placed in the /api folder.
+  try {
+    const fetchResponse = await fetch(OPENSKY_URL);
 
-module.exports = (req, res) => {
-  const url = 'https://opensky-network.org/api/states/all';
-  https.get(url, (r) => {
-    let data = '';
-    r.on('data', (chunk) => data += chunk);
-    r.on('end', () => {
-      res.setHeader('Content-Type', 'application/json');
-      res.statusCode = 200;
-      res.end(data);
-    });
-  }).on('error', (err) => {
-    res.statusCode = 502;
-    res.setHeader('content-type', 'application/json');
-    res.end(JSON.stringify({ error: 'Proxy failed', details: String(err && err.message ? err.message : err) }));
+    if (!fetchResponse.ok) {
+      res.status(fetchResponse.status).json({ error: 'Upstream error from OpenSky Network' });
+      return;
+    }
+
+    const data = await fetchResponse.json();
+    res.status(200).json(data);
+  } catch (error) {
+    res.status(502).json({ error: 'Proxy failed', details: error.message });
   }
 }
+
