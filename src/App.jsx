@@ -93,17 +93,17 @@ export default function App() {
       keepBuffer: 1
     }).addTo(map);
 
-  // create canvas and attach to overlayPane
+    // create canvas and attach to map container so containerPoint coordinates align
     const canvas = document.createElement('canvas');
     canvas.style.position = 'absolute';
     canvas.style.top = '0';
     canvas.style.left = '0';
     canvas.style.pointerEvents = 'none'; // allow map interaction
-    const pane = map.getPane('overlayPane');
-    pane.appendChild(canvas);
-  // initialize with devicePixelRatio aware sizing in resizeCanvas
-  const initialCtx = canvas.getContext('2d');
-  canvasRef.current = { canvas, ctx: initialCtx };
+    const container = map.getContainer();
+    container.appendChild(canvas);
+    // initialize with devicePixelRatio aware sizing in resizeCanvas
+    const initialCtx = canvas.getContext('2d');
+    canvasRef.current = { canvas, ctx: initialCtx, container };
     mapRef.current = map;
 
     // resize canvas to map size
@@ -125,7 +125,7 @@ export default function App() {
 
     return () => {
       map.off('resize move zoom', resizeCanvas);
-      if (pane.contains(canvas)) pane.removeChild(canvas);
+  try { if (container.contains(canvas)) container.removeChild(canvas); } catch { /* ignore */ }
       map.remove();
       cancelAnimationFrame(rafRef.current);
     };
