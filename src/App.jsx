@@ -1,25 +1,46 @@
-import React, { useEffect, useState, useMemo, useCallback } from 'react';
-import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
+import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import axios from 'axios';
-import './index.css'; // Import your CSS
+import './index.css';
 
 // --- Configuration ---
 const OPENSKY_API_URL = 'https://opensky-network.org/api/states/all';
+const BOUNDS_PADDING = 0.5; // degrees
+
+// Custom hook for viewport state
+function useViewport() {
+  const map = useMap();
+  const [bounds, setBounds] = useState(map.getBounds());
+  
+  useEffect(() => {
+    const updateBounds = () => {
+      setBounds(map.getBounds());
+    };
+    
+    map.on('moveend', updateBounds);
+    return () => map.off('moveend', updateBounds);
+  }, [map]);
+  
+  return bounds;
+}
 
 // --- Aircraft Icon ---
-// Create aircraft icon with rotation support
+// Simplified aircraft icon cache
+const iconCache = {};
 const getRotatedIcon = (heading) => {
-  const validHeading = heading !== null && heading !== undefined && !isNaN(heading) ? heading : 0;
-  
-  return new L.DivIcon({
-    className: 'aircraft-marker',
-    iconSize: [16, 16],
-    iconAnchor: [8, 8],
-    popupAnchor: [0, -16],
-    html: `<div style="transform: rotate(${validHeading}deg);"></div>`
-  });
+  const roundedHeading = Math.round(heading || 0);
+  if (!iconCache[roundedHeading]) {
+    iconCache[roundedHeading] = new L.DivIcon({
+      className: 'aircraft-marker',
+      iconSize: [8, 8],
+      iconAnchor: [4, 4],
+      popupAnchor: [0, -8],
+      html: `<div style="transform: rotate(${roundedHeading}deg);"></div>`
+    });
+  }
+  return iconCache[roundedHeading];
 };
 
 // --- Main App Component ---
@@ -28,45 +49,61 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Optimized function to fetch aircraft data
-  const fetchAircraftData = useCallback(async () => {
+  // Map viewport component
+  const MapViewport = ({ onBoundsChange }) => {
+    const bounds = useViewport();
+    
+    useEffect(() => {
+      onBoundsChange(bounds);
+    }, [bounds, onBoundsChange]);
+    
+    return null;
+  };
+
+  // Optimized data fetching with viewport filtering
+  const fetchAircraftData = useCallback(async (bounds) => {
+    if (!bounds) return;
+    
     setLoading(true);
     setError(null);
     try {
       const response = await axios.get(OPENSKY_API_URL);
       
       if (response.data?.states?.length > 0) {
-        const processedAircraft = response.data.states
-          .reduce((acc, state) => {
-            if (state[5] !== null && state[6] !== null) { // Check for valid coordinates
-              acc.push({
-                icao24: state[0],
-                callsign: state[1]?.trim() || 'N/A',
-                origin_country: state[2],
-                longitude: state[5],
-                latitude: state[6],
-                baro_altitude: state[7],
-                on_ground: state[8],
-                velocity: state[9],
-                heading: state[10],
-                vertical_rate: state[11]
-              });
-            }
-            return acc;
-          }, []);
+        // Filter aircraft within viewport + padding
+        const [south, west] = [
+          bounds.getSouth() - BOUNDS_PADDING,
+          bounds.getWest() - BOUNDS_PADDING
+        ];
+        const [north, east] = [
+          bounds.getNorth() + BOUNDS_PADDING,
+          bounds.getEast() + BOUNDS_PADDING
+        ];
+
+        const processedAircraft = response.data.states.reduce((acc, state) => {
+          const lat = state[6];
+          const lon = state[5];
+          
+          if (lat !== null && lon !== null &&
+              lat >= south && lat <= north &&
+              lon >= west && lon <= east) {
+            acc.push({
+              id: state[0], // icao24
+              pos: [lat, lon],
+              rot: state[10] || 0, // heading
+              alt: state[7], // altitude for popup
+              spd: state[9], // velocity for popup
+              cs: state[1]?.trim() // callsign for popup
+            });
+          }
+          return acc;
+        }, []);
 
         setAircraft(processedAircraft);
-      } else {
-        setError("No aircraft data available.");
       }
     } catch (err) {
-      const errorMessage = err.response 
-        ? `API Error (${err.response.status}): ${err.response.statusText}`
-        : err.request 
-          ? "Network Error: No response received from OpenSky API."
-          : `Request Error: ${err.message}`;
-      setError(errorMessage);
-      console.error("Error fetching aircraft data:", err);
+      setError(err.response?.statusText || "Network error");
+      console.error("Error:", err);
     } finally {
       setLoading(false);
     }
@@ -99,50 +136,41 @@ function App() {
       <div className="map-container">
         <MapContainer
           center={[20, 0]}
-          zoom={2}
+          zoom={3}
           minZoom={2}
-          maxZoom={18}
+          maxZoom={12} // Reduced max zoom for better performance
           worldCopyJump={true}
           style={{ height: '100%', width: '100%' }}
-          preferCanvas={true} // Use Canvas renderer for better performance
+          preferCanvas={true}
         >
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            updateWhenZooming={false} // Improve performance during zoom
+            updateWhenZooming={false}
             updateWhenIdle={true}
+            maxNativeZoom={12} // Match maxZoom for performance
+            keepBuffer={2} // Reduce tile buffer
           />
+          
+          <MapViewport onBoundsChange={(bounds) => fetchAircraftData(bounds)} />
 
-          {/* Aircraft Markers - Using useMemo to prevent unnecessary re-renders */}
+          {/* Optimized Aircraft Markers */}
           {useMemo(() => (
-            aircraft.map((ac) => {
-              const position = [ac.latitude, ac.longitude];
-              const icon = getRotatedIcon(ac.heading);
-
-              return (
-                <Marker
-                  key={ac.icao24}
-                  position={position}
-                  icon={icon}
-                >
-                  <Popup>
-                    <h3>{ac.callsign}</h3>
-                    <p><strong>ICAO:</strong> {ac.icao24}</p>
-                    <p><strong>Country:</strong> {ac.origin_country}</p>
-                    {ac.baro_altitude && (
-                      <p><strong>Altitude:</strong> {Math.round(ac.baro_altitude)} m</p>
-                    )}
-                    {ac.velocity && (
-                      <p><strong>Speed:</strong> {Math.round(ac.velocity * 3.6)} km/h</p>
-                    )}
-                    {ac.heading && (
-                      <p><strong>Heading:</strong> {Math.round(ac.heading)}°</p>
-                    )}
-                    <p><strong>On Ground:</strong> {ac.on_ground ? 'Yes' : 'No'}</p>
-                  </Popup>
-                </Marker>
-              );
-            })
+            aircraft.map(({ id, pos, rot, cs, alt, spd }) => (
+              <Marker
+                key={id}
+                position={pos}
+                icon={getRotatedIcon(rot)}
+              >
+                <Popup>
+                  <div className="aircraft-popup">
+                    <strong>{cs || 'N/A'}</strong>
+                    {alt && <div>Alt: {Math.round(alt)}m</div>}
+                    {spd && <div>Spd: {Math.round(spd * 3.6)}km/h</div>}
+                  </div>
+                </Popup>
+              </Marker>
+            ))
           ), [aircraft])}
         </MapContainer>
       </div>
