@@ -3,10 +3,11 @@ import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import axios from 'axios';
 import './index.css';
+import SettingsPanel from './SettingsPanel';
+import useMap from './useMap';
 
 const OPENSKY_API_URL = 'https://opensky-network.org/api/states/all';
 const UPDATE_INTERVAL = 10000; // ms
-const MAX_ZOOM = 10;
 
 // small in-memory cache for generated plane sprites
 const planeImgCache = new Map();
@@ -39,8 +40,7 @@ function drawPlane(ctx, x, y, heading, color = '#ffbb00') {
 }
 
 export default function App() {
-  const mapRef = useRef(null);
-  const canvasRef = useRef(null);
+  const { mapRef, canvasRef } = useMap();
   const aircraftRef = useRef([]); // holds minimal aircraft objects
   const lastFetchRef = useRef(0);
   const rafRef = useRef(null);
@@ -73,66 +73,6 @@ export default function App() {
 
   const [settingsOpen, setSettingsOpen] = useState(false);
 
-  // init map + canvas overlay
-  useEffect(() => {
-    const map = L.map('map', {
-      center: [20, 0],
-      zoom: 3,
-      minZoom: 2,
-      maxZoom: MAX_ZOOM,
-      worldCopyJump: true,
-      preferCanvas: true
-    });
-
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors',
-      maxZoom: MAX_ZOOM,
-      maxNativeZoom: MAX_ZOOM,
-      updateWhenIdle: true,
-      updateWhenZooming: false,
-      keepBuffer: 1
-    }).addTo(map);
-
-  // create canvas and attach to overlayPane; we'll draw using layer coordinates
-  const canvas = document.createElement('canvas');
-  canvas.style.position = 'absolute';
-  canvas.style.top = '0';
-  canvas.style.left = '0';
-  canvas.style.pointerEvents = 'none'; // allow map interaction
-  const pane = map.getPane('overlayPane');
-  pane.appendChild(canvas);
-  // initialize with devicePixelRatio aware sizing in resizeCanvas
-  const initialCtx = canvas.getContext('2d');
-  canvasRef.current = { canvas, ctx: initialCtx, pane };
-    mapRef.current = map;
-
-    // resize canvas to map size
-    function resizeCanvas() {
-      const size = map.getSize();
-      const ratio = window.devicePixelRatio || 1;
-      canvas.width = Math.round(size.x * ratio);
-      canvas.height = Math.round(size.y * ratio);
-      canvas.style.width = size.x + 'px';
-      canvas.style.height = size.y + 'px';
-      const ctx = canvas.getContext('2d');
-      // account for map pixel origin so layer coordinates map to canvas pixels
-      const origin = (map.getPixelOrigin && map.getPixelOrigin()) || { x: 0, y: 0 };
-      // transform: scale for DPR and translate by -origin
-      ctx.setTransform(ratio, 0, 0, ratio, -origin.x * ratio, -origin.y * ratio);
-      canvasRef.current = { canvas, ctx, origin, ratio };
-    }
-
-    resizeCanvas();
-    map.on('resize move zoom', resizeCanvas);
-
-    return () => {
-      map.off('resize move zoom', resizeCanvas);
-      try { if (pane.contains(canvas)) pane.removeChild(canvas); } catch { /* ignore */ }
-      map.remove();
-      cancelAnimationFrame(rafRef.current);
-    };
-  }, []);
-
   // fetch data (rate-limited) and store minimal aircraft list
   // robust fetch with retry and optional proxy fallback
   const fetchData = useCallback(async () => {
@@ -146,14 +86,12 @@ export default function App() {
     // helper to parse response into aircraft array
     const parseStates = (res) => {
       const states = res.data?.states || [];
-      const bounds = map.getBounds();
       const next = [];
       for (let i = 0; i < states.length; i++) {
         const s = states[i];
         const lon = s[5];
         const lat = s[6];
         if (lat == null || lon == null) continue;
-        if (!bounds.contains([lat, lon])) continue;
         next.push({
           id: s[0],
           cs: (s[1] || '').trim() || 'N/A',
@@ -179,36 +117,44 @@ export default function App() {
       return r;
     };
 
-    // try direct with exponential backoff, then proxy fallback
-    const maxAttempts = 3;
-    let attempt = 0;
-    while (attempt < maxAttempts) {
-      attempt++;
+    const bounds = map.getBounds();
+    const { _northEast, _southWest } = bounds;
+    const queryString = `lamin=${_southWest.lat}&lomin=${_southWest.lng}&lamax=${_northEast.lat}&lomax=${_northEast.lng}`;
+
+    let res = null;
+    if (useProxy) {
       try {
-        res = await tryFetch(OPENSKY_API_URL, 4000 + attempt * 1000);
-        break;
-      } catch {
-        // wait a bit before retrying
-        const backoff = 200 * Math.pow(2, attempt);
-        await new Promise(r => setTimeout(r, backoff));
+        res = await tryFetch(`/api/opensky?${queryString}`, 8000);
+      } catch (err) {
+        console.error('Proxy fetch failed', err);
+        setStatus({ loading: false, error: 'Proxy fetch failed', count: 0 });
+        return;
+      }
+    } else {
+      const url = `${OPENSKY_API_URL}?${queryString}`;
+      const maxAttempts = 3;
+      let attempt = 0;
+      while (attempt < maxAttempts) {
+        attempt++;
+        try {
+          res = await tryFetch(url, 4000 + attempt * 1000);
+          break;
+        } catch {
+          const backoff = 200 * Math.pow(2, attempt);
+          await new Promise(r => setTimeout(r, backoff));
+        }
       }
     }
 
     if (!res) {
-      // try proxy once before giving up
-      try {
-        res = await tryFetch('/api/opensky', 8000);
-      } catch {
-        // last chance: return cached data if still recent
-        if (fetchData._cache.data && (Date.now() - fetchData._cache.ts < CACHE_TTL)) {
-          const cachedNext = fetchData._cache.data;
-          aircraftRef.current = cachedNext;
-          setStatus({ loading: false, error: null, count: cachedNext.length });
-          return;
-        }
-        setStatus({ loading: false, error: 'Fetch failed', count: 0 });
+      if (fetchData._cache.data && (Date.now() - fetchData._cache.ts < CACHE_TTL)) {
+        const cachedNext = fetchData._cache.data;
+        aircraftRef.current = cachedNext;
+        setStatus({ loading: false, error: null, count: cachedNext.length });
         return;
       }
+      setStatus({ loading: false, error: 'Fetch failed', count: 0 });
+      return;
     }
 
     try {
@@ -283,10 +229,7 @@ export default function App() {
         ctx.globalCompositeOperation = 'lighter';
         for (const [, cell] of cells) {
           const intensity = Math.min(1, cell.count / 15);
-          const grd = ctx.createRadialGradient(cell.x, cell.y, 0, cell.x, cell.y, Math.max(24, gridSize * 1.5));
-          grd.addColorStop(0, `rgba(255,80,80,${0.18 * intensity})`);
-          grd.addColorStop(1, 'rgba(255,80,80,0)');
-          ctx.fillStyle = grd;
+          ctx.fillStyle = `rgba(255, 80, 80, ${0.18 * intensity})`;
           ctx.beginPath();
           ctx.arc(cell.x, cell.y, Math.max(24, gridSize * 1.5), 0, Math.PI * 2);
           ctx.fill();
@@ -418,27 +361,15 @@ export default function App() {
         </div>
       </div>
       {settingsOpen && (
-        <div className="settings-panel">
-          <div className="settings-row">
-            <label>Detail</label>
-            <select value={detail} onChange={(e) => setDetail(e.target.value)}>
-              <option value="auto">Auto</option>
-              <option value="high">High</option>
-              <option value="low">Low</option>
-            </select>
-          </div>
-          <div className="settings-row">
-            <label>Heatmap</label>
-            <input type="checkbox" checked={heatmapOn} onChange={(e) => setHeatmapOn(e.target.checked)} />
-          </div>
-          <div className="settings-row">
-            <label>Use Proxy</label>
-            <input type="checkbox" checked={useProxy} onChange={(e) => setUseProxy(e.target.checked)} />
-          </div>
-          <div className="settings-row">
-            <button onClick={() => { autoScaleRef.current = 1; }}>Reset Autotune</button>
-          </div>
-        </div>
+        <SettingsPanel
+          detail={detail}
+          setDetail={setDetail}
+          heatmapOn={heatmapOn}
+          setHeatmapOn={setHeatmapOn}
+          useProxy={useProxy}
+          setUseProxy={setUseProxy}
+          autoScaleRef={autoScaleRef}
+        />
       )}
       <div id="map" className="map-container" />
     </div>
