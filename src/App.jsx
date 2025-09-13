@@ -93,17 +93,17 @@ export default function App() {
       keepBuffer: 1
     }).addTo(map);
 
-    // create canvas and attach to map container so containerPoint coordinates align
-    const canvas = document.createElement('canvas');
-    canvas.style.position = 'absolute';
-    canvas.style.top = '0';
-    canvas.style.left = '0';
-    canvas.style.pointerEvents = 'none'; // allow map interaction
-    const container = map.getContainer();
-    container.appendChild(canvas);
-    // initialize with devicePixelRatio aware sizing in resizeCanvas
-    const initialCtx = canvas.getContext('2d');
-    canvasRef.current = { canvas, ctx: initialCtx, container };
+  // create canvas and attach to overlayPane; we'll draw using layer coordinates
+  const canvas = document.createElement('canvas');
+  canvas.style.position = 'absolute';
+  canvas.style.top = '0';
+  canvas.style.left = '0';
+  canvas.style.pointerEvents = 'none'; // allow map interaction
+  const pane = map.getPane('overlayPane');
+  pane.appendChild(canvas);
+  // initialize with devicePixelRatio aware sizing in resizeCanvas
+  const initialCtx = canvas.getContext('2d');
+  canvasRef.current = { canvas, ctx: initialCtx, pane };
     mapRef.current = map;
 
     // resize canvas to map size
@@ -115,9 +115,11 @@ export default function App() {
       canvas.style.width = size.x + 'px';
       canvas.style.height = size.y + 'px';
       const ctx = canvas.getContext('2d');
-      // set transform so drawing is in CSS pixels
-      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-      canvasRef.current = { canvas, ctx };
+      // account for map pixel origin so layer coordinates map to canvas pixels
+      const origin = (map.getPixelOrigin && map.getPixelOrigin()) || { x: 0, y: 0 };
+      // transform: scale for DPR and translate by -origin
+      ctx.setTransform(ratio, 0, 0, ratio, -origin.x * ratio, -origin.y * ratio);
+      canvasRef.current = { canvas, ctx, origin, ratio };
     }
 
     resizeCanvas();
@@ -125,7 +127,7 @@ export default function App() {
 
     return () => {
       map.off('resize move zoom', resizeCanvas);
-  try { if (container.contains(canvas)) container.removeChild(canvas); } catch { /* ignore */ }
+      try { if (pane.contains(canvas)) pane.removeChild(canvas); } catch { /* ignore */ }
       map.remove();
       cancelAnimationFrame(rafRef.current);
     };
@@ -264,7 +266,8 @@ export default function App() {
 
       for (let i = 0; i < aircraft.length; i++) {
         const a = aircraft[i];
-        const point = map.latLngToContainerPoint([a.lat, a.lon]);
+        // use layer point so coords remain stable during zoom/transform
+        const point = map.latLngToLayerPoint([a.lat, a.lon]);
         const x = Math.round(point.x);
         const y = Math.round(point.y);
         if (x < -50 || y < -50 || x > size.x + 50 || y > size.y + 50) continue;
@@ -291,7 +294,7 @@ export default function App() {
         ctx.restore();
       }
 
-      // draw sprites if loaded, otherwise fallback to drawPlane
+  // draw sprites if loaded, otherwise fallback to drawPlane
       for (const [, cell] of cells) {
         const zoomForSize = Math.max(1, map.getZoom());
         const size = Math.max(12, Math.min(44, 10 + zoomForSize * 3));
@@ -361,16 +364,16 @@ export default function App() {
       fetchData();
     };
 
-    // click handler: find nearest aircraft and show popup
+    // click handler: find nearest aircraft and show popup (use layer points)
     const onClick = (ev) => {
       const aircraft = aircraftRef.current;
       if (!aircraft || aircraft.length === 0) return;
-      const clickPoint = map.latLngToContainerPoint(ev.latlng);
+      const clickPoint = ev.layerPoint || map.latLngToLayerPoint(ev.latlng);
       let best = null;
       let bestDist = Infinity;
       for (let i = 0; i < aircraft.length; i++) {
         const a = aircraft[i];
-        const p = map.latLngToContainerPoint([a.lat, a.lon]);
+        const p = map.latLngToLayerPoint([a.lat, a.lon]);
         const dx = p.x - clickPoint.x;
         const dy = p.y - clickPoint.y;
         const d = dx*dx + dy*dy;
