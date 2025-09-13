@@ -6,7 +6,8 @@ const https = require('https');
 // will map this to /api/opensky automatically when placed in the /api folder.
 
 module.exports = (req, res) => {
-  const url = 'https://opensky-network.org/api/states/all';
+  const query = req.url.split('?')[1] || '';
+  const url = `https://opensky-network.org/api/states/all?${query}`;
   https.get(url, (r) => {
     let data = '';
     r.on('data', (chunk) => data += chunk);
