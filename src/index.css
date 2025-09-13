@@ -48,24 +48,15 @@ body, html, #root {
   opacity: 0.8;
 }
 
-/* Aircraft marker styles */
+/* Minimal aircraft marker */
 .aircraft-marker {
-  width: 8px;
-  height: 8px;
-  position: relative;
+  width: 8px !important;
+  height: 8px !important;
+  margin-left: -4px !important;
+  margin-top: -4px !important;
+  background: #ffbb00;
+  clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
 }
-
-.aircraft-marker div {
-  width: 0;
-  height: 0;
-  position: absolute;
-  border-left: 4px solid transparent;
-  border-right: 4px solid transparent;
-  border-bottom: 8px solid rgba(255, 187, 0, 0.8);
-  transform-origin: center;
-}
-
-/* Remove hover effects for better performance */
 
 /* Basic Popup Styling (if using Leaflet's built-in) */
 .aircraft-popup {

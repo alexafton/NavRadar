@@ -1,5 +1,27 @@
-import React, { useEffect, useState, useMemo, useCallback, useRef } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap } from 'react-leaflet';
+import// --- Configuration ---
+const OPENSKY_API_URL = 'https://opensky-network.org/api/states/all';
+const BOUNDS_PADDING = 0.5; // degrees
+const UPDATE_INTERVAL = 10000; // 10 seconds
+const MAX_ZOOM = 10; // Reduce max zoom for better performance
+
+// Canvas utilities for aircraft rendering
+const drawAircraft = (ctx, x, y, heading, selected = false) => {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate((heading || 0) * Math.PI / 180);
+  
+  // Draw aircraft triangle
+  ctx.beginPath();
+  ctx.moveTo(0, -6);
+  ctx.lineTo(4, 6);
+  ctx.lineTo(-4, 6);
+  ctx.closePath();
+  
+  // Fill and stroke
+  ctx.fillStyle = selected ? '#ff9900' : '#ffbb00';
+  ctx.fill();
+  ctx.restore();
+}; useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import axios from 'axios';
@@ -120,60 +142,46 @@ function App() {
     return () => clearInterval(intervalId);
   }, [fetchAircraftData]); // Add fetchAircraftData to dependencies
 
+  // Set up update interval
+  useEffect(() => {
+    // Initial update
+    updateAircraft();
+    
+    // Set up periodic updates
+    const intervalId = setInterval(updateAircraft, UPDATE_INTERVAL);
+    
+    // Set up map event handlers
+    const map = mapRef.current;
+    if (map) {
+      const debouncedUpdate = () => {
+        const now = Date.now();
+        if (now - lastFetchRef.current >= UPDATE_INTERVAL / 2) {
+          updateAircraft();
+        }
+      };
+      
+      map.on('moveend', debouncedUpdate);
+      map.on('zoomend', debouncedUpdate);
+      
+      return () => {
+        clearInterval(intervalId);
+        map.off('moveend', debouncedUpdate);
+        map.off('zoomend', debouncedUpdate);
+      };
+    }
+  }, []);
+
   return (
     <div>
-      {/* Simple Header */}
       <div className="header">
         <h1>NavRadar</h1>
         <div className="info">
-          {loading && <span>Loading aircraft...</span>}
-          {error && <span style={{ color: 'red' }}>Error: {error}</span>}
-          {!loading && !error && <span>{aircraft.length} aircraft tracked</span>}
+          {status.loading && <span>Loading aircraft...</span>}
+          {status.error && <span style={{ color: 'red' }}>Error: {status.error}</span>}
+          {!status.loading && !status.error && <span>{status.count} aircraft tracked</span>}
         </div>
       </div>
-
-      {/* Map Container */}
-      <div className="map-container">
-        <MapContainer
-          center={[20, 0]}
-          zoom={3}
-          minZoom={2}
-          maxZoom={12} // Reduced max zoom for better performance
-          worldCopyJump={true}
-          style={{ height: '100%', width: '100%' }}
-          preferCanvas={true}
-        >
-          <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            updateWhenZooming={false}
-            updateWhenIdle={true}
-            maxNativeZoom={12} // Match maxZoom for performance
-            keepBuffer={2} // Reduce tile buffer
-          />
-          
-          <MapViewport onBoundsChange={(bounds) => fetchAircraftData(bounds)} />
-
-          {/* Optimized Aircraft Markers */}
-          {useMemo(() => (
-            aircraft.map(({ id, pos, rot, cs, alt, spd }) => (
-              <Marker
-                key={id}
-                position={pos}
-                icon={getRotatedIcon(rot)}
-              >
-                <Popup>
-                  <div className="aircraft-popup">
-                    <strong>{cs || 'N/A'}</strong>
-                    {alt && <div>Alt: {Math.round(alt)}m</div>}
-                    {spd && <div>Spd: {Math.round(spd * 3.6)}km/h</div>}
-                  </div>
-                </Popup>
-              </Marker>
-            ))
-          ), [aircraft])}
-        </MapContainer>
-      </div>
+      <div id="map" style={{ height: 'calc(100vh - 50px)', width: '100%' }} />
     </div>
   );
 }
