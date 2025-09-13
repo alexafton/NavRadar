@@ -9,6 +9,18 @@ import useMap from './useMap';
 const OPENSKY_API_URL = 'https://opensky-network.org/api/states/all';
 const UPDATE_INTERVAL = 10000; // ms
 
+function debounce(func, wait) {
+  let timeout;
+  return function executedFunction(...args) {
+    const later = () => {
+      clearTimeout(timeout);
+      func(...args);
+    };
+    clearTimeout(timeout);
+    timeout = setTimeout(later, wait);
+  };
+}
+
 // small in-memory cache for generated plane sprites
 const planeImgCache = new Map();
 
@@ -121,7 +133,6 @@ export default function App() {
     const { _northEast, _southWest } = bounds;
     const queryString = `lamin=${_southWest.lat}&lomin=${_southWest.lng}&lamax=${_northEast.lat}&lomax=${_northEast.lng}`;
 
-    let res = null;
     if (useProxy) {
       try {
         res = await tryFetch(`/api/opensky?${queryString}`, 8000);
@@ -302,9 +313,10 @@ export default function App() {
     const map = mapRef.current;
     if (!map) return;
 
+    const debouncedFetchData = debounce(fetchData, 500);
+
     const onMove = () => {
-      // fetch quickly on move end, but not too often
-      fetchData();
+      debouncedFetchData();
     };
 
     // click handler: find nearest aircraft and show popup (use layer points)
