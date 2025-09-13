@@ -48,6 +48,29 @@ body, html, #root {
   opacity: 0.8;
 }
 
+.controls {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.controls label {
+  font-size: 0.85em;
+  margin-right: 6px;
+  color: #cfe3ff;
+}
+.controls button {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.12);
+  color: #dbe9ff;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.controls button.active {
+  background: rgba(255,255,255,0.08);
+  border-color: rgba(255,255,255,0.22);
+}
+
 /* Minimal aircraft marker */
 .aircraft-marker {
   width: 8px !important;
@@ -73,3 +96,6 @@ body, html, #root {
 .aircraft-popup div {
   color: #666;
 }
+
+/* Make Leaflet popups look slightly cleaner */
+.leaflet-popup-content-wrapper { font-size: 12px; }
