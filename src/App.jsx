@@ -8,6 +8,19 @@ const OPENSKY_API_URL = 'https://opensky-network.org/api/states/all';
 const UPDATE_INTERVAL = 10000; // ms
 const MAX_ZOOM = 10;
 
+// small in-memory cache for generated plane sprites
+const planeImgCache = new Map();
+
+// create an image element from a tiny SVG that resembles a plane icon
+function createPlaneImage(size) {
+  // Slightly more accurate plane silhouette (open-source inspired)
+  const scale = size / 24;
+  const svg = `<?xml version="1.0" encoding="UTF-8"?><svg xmlns='http://www.w3.org/2000/svg' width='${size}' height='${size}' viewBox='0 0 24 24'><g transform='scale(${scale})' fill='none' stroke='none'><path d='M12 1c0 0-1.5 4-2 5-1 .5-5 2-5 2s4 1 5 1c.5 0 2 4 2 4s0-4 .5-5c.8-1.2 3.5-1.2 3.5-1.2s-2.8-.5-4-1.5c-.6-.5-1.5-3-1.5-3z' fill='#ffbb00' stroke='#222' stroke-width='0.3'/></g></svg>`;
+  const img = new Image();
+  img.src = 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+  return img;
+}
+
 // Draw a small plane-like triangle (slightly stylized)
 function drawPlane(ctx, x, y, heading, color = '#ffbb00') {
   ctx.save();
@@ -48,15 +61,17 @@ export default function App() {
         if (typeof s.heatmapOn === 'boolean') setHeatmapOn(s.heatmapOn);
         if (typeof s.useProxy === 'boolean') setUseProxy(s.useProxy);
       }
-    } catch (e) {
-      /* ignore */
+    } catch {
+      // ignore parse errors
     }
   }, []);
 
   useEffect(() => {
     const payload = { detail, heatmapOn, useProxy };
-    try { localStorage.setItem('navradar_settings', JSON.stringify(payload)); } catch (e) {}
+    try { localStorage.setItem('navradar_settings', JSON.stringify(payload)); } catch { /* ignore */ }
   }, [detail, heatmapOn, useProxy]);
+
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // init map + canvas overlay
   useEffect(() => {
@@ -117,6 +132,7 @@ export default function App() {
   }, []);
 
   // fetch data (rate-limited) and store minimal aircraft list
+  // robust fetch with retry and optional proxy fallback
   const fetchData = useCallback(async () => {
     const map = mapRef.current;
     if (!map) return;
@@ -125,9 +141,8 @@ export default function App() {
     lastFetchRef.current = now;
     setStatus(s => ({ ...s, loading: true }));
 
-    try {
-      const url = useProxy ? '/api/opensky' : OPENSKY_API_URL;
-      const res = await axios.get(url, { timeout: 5000 });
+    // helper to parse response into aircraft array
+    const parseStates = (res) => {
       const states = res.data?.states || [];
       const bounds = map.getBounds();
       const next = [];
@@ -137,7 +152,6 @@ export default function App() {
         const lat = s[6];
         if (lat == null || lon == null) continue;
         if (!bounds.contains([lat, lon])) continue;
-        // include richer fields; destination not available from OpenSky states
         next.push({
           id: s[0],
           cs: (s[1] || '').trim() || 'N/A',
@@ -151,10 +165,55 @@ export default function App() {
           last_contact: s[4] || null
         });
       }
+      return next;
+    };
+
+    // very short in-memory cache to reduce visible failures
+    if (!fetchData._cache) fetchData._cache = { ts: 0, data: null };
+    const CACHE_TTL = 5000; // ms
+    let res = null;
+    const tryFetch = async (url, timeout) => {
+      const r = await axios.get(url, { timeout });
+      return r;
+    };
+
+    // try direct with exponential backoff, then proxy fallback
+    const maxAttempts = 3;
+    let attempt = 0;
+    while (attempt < maxAttempts) {
+      attempt++;
+      try {
+        res = await tryFetch(OPENSKY_API_URL, 4000 + attempt * 1000);
+        break;
+      } catch {
+        // wait a bit before retrying
+        const backoff = 200 * Math.pow(2, attempt);
+        await new Promise(r => setTimeout(r, backoff));
+      }
+    }
+
+    if (!res) {
+      // try proxy once before giving up
+      try {
+        res = await tryFetch('/api/opensky', 8000);
+      } catch {
+        // last chance: return cached data if still recent
+        if (fetchData._cache.data && (Date.now() - fetchData._cache.ts < CACHE_TTL)) {
+          const cachedNext = fetchData._cache.data;
+          aircraftRef.current = cachedNext;
+          setStatus({ loading: false, error: null, count: cachedNext.length });
+          return;
+        }
+        setStatus({ loading: false, error: 'Fetch failed', count: 0 });
+        return;
+      }
+    }
+
+    try {
+      const next = parseStates(res);
 
       // Progressive downsampling when there are too many aircraft in view
       let sampled = next;
-      // MAX_IN_VIEW may be reduced by autoScaleRef when device is struggling
       const BASE_MAX = 3000;
       const MAX_IN_VIEW = Math.max(200, Math.floor(BASE_MAX / autoScaleRef.current));
       if (next.length > MAX_IN_VIEW) {
@@ -163,13 +222,15 @@ export default function App() {
         console.info(`Downsampled ${next.length} -> ${sampled.length} (factor ${factor})`);
       }
 
-      aircraftRef.current = sampled;
-      setStatus({ loading: false, error: null, count: next.length });
+  aircraftRef.current = sampled;
+  // populate cache
+  fetchData._cache = { ts: Date.now(), data: sampled };
+  setStatus({ loading: false, error: null, count: next.length });
     } catch (err) {
-      console.error(err);
+      console.error('Parsing/fill failed', err && err.message);
       setStatus({ loading: false, error: 'Fetch failed', count: 0 });
     }
-  }, [useProxy]);
+  }, []);
 
   // draw loop using requestAnimationFrame
   useEffect(() => {
@@ -230,12 +291,31 @@ export default function App() {
         ctx.restore();
       }
 
+      // draw sprites if loaded, otherwise fallback to drawPlane
       for (const [, cell] of cells) {
-        // color by density for icon
-        let color = '#0f62fe';
-        if (cell.count > 20) color = '#ff4d4f';
-        else if (cell.count > 5) color = '#ffba08';
-        drawPlane(ctx, cell.x, cell.y, cell.rep.hdg || 0, color);
+        const zoomForSize = Math.max(1, map.getZoom());
+        const size = Math.max(12, Math.min(44, 10 + zoomForSize * 3));
+        const key = `${size}`;
+        let img = planeImgCache.get(key);
+        if (!img) {
+          img = createPlaneImage(size);
+          planeImgCache.set(key, img);
+        }
+
+        if (img && img.complete) {
+          ctx.save();
+          ctx.translate(cell.x, cell.y);
+          ctx.rotate((cell.rep.hdg || 0) * Math.PI / 180);
+          ctx.drawImage(img, -size / 2, -size / 2, size, size);
+          ctx.restore();
+        } else {
+          // fallback colored triangle
+          let color = '#0f62fe';
+          if (cell.count > 20) color = '#ff4d4f';
+          else if (cell.count > 5) color = '#ffba08';
+          drawPlane(ctx, cell.x, cell.y, cell.rep.hdg || 0, color);
+        }
+
         if (cell.count > 1) {
           ctx.fillStyle = 'rgba(0,0,0,0.7)';
           ctx.font = '12px system-ui, -apple-system, Segoe UI, Roboto, sans-serif';
@@ -329,18 +409,34 @@ export default function App() {
           {status.error && <span style={{ color: 'red' }}>Error: {status.error}</span>}
           {!status.loading && !status.error && <span>{status.count} aircraft in view</span>}
         </div>
-        <div className="controls">
-          <label>Detail:</label>
-          <button className={detail === 'auto' ? 'active' : ''} onClick={() => setDetail('auto')}>Auto</button>
-          <button className={detail === 'high' ? 'active' : ''} onClick={() => setDetail('high')}>High</button>
-          <button className={detail === 'low' ? 'active' : ''} onClick={() => setDetail('low')}>Low</button>
-          <label style={{ marginLeft: 12 }}>Heatmap</label>
-          <button className={heatmapOn ? 'active' : ''} onClick={() => setHeatmapOn(h => !h)}>{heatmapOn ? 'On' : 'Off'}</button>
-          <label style={{ marginLeft: 12 }}>Proxy</label>
-          <button className={useProxy ? 'active' : ''} onClick={() => setUseProxy(p => !p)}>{useProxy ? 'On' : 'Off'}</button>
-          <div style={{ marginLeft: 12, color: '#cfe3ff' }}>FPS: {fps}</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <button className="settings-toggle" onClick={() => setSettingsOpen(s => !s)}>⚙</button>
+          <div style={{ color: '#cfe3ff' }}>FPS: {fps}</div>
         </div>
       </div>
+      {settingsOpen && (
+        <div className="settings-panel">
+          <div className="settings-row">
+            <label>Detail</label>
+            <select value={detail} onChange={(e) => setDetail(e.target.value)}>
+              <option value="auto">Auto</option>
+              <option value="high">High</option>
+              <option value="low">Low</option>
+            </select>
+          </div>
+          <div className="settings-row">
+            <label>Heatmap</label>
+            <input type="checkbox" checked={heatmapOn} onChange={(e) => setHeatmapOn(e.target.checked)} />
+          </div>
+          <div className="settings-row">
+            <label>Use Proxy</label>
+            <input type="checkbox" checked={useProxy} onChange={(e) => setUseProxy(e.target.checked)} />
+          </div>
+          <div className="settings-row">
+            <button onClick={() => { autoScaleRef.current = 1; }}>Reset Autotune</button>
+          </div>
+        </div>
+      )}
       <div id="map" className="map-container" />
     </div>
   );

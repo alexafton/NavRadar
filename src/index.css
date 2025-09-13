@@ -48,28 +48,7 @@ body, html, #root {
   opacity: 0.8;
 }
 
-.controls {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-}
-.controls label {
-  font-size: 0.85em;
-  margin-right: 6px;
-  color: #cfe3ff;
-}
-.controls button {
-  background: transparent;
-  border: 1px solid rgba(255,255,255,0.12);
-  color: #dbe9ff;
-  padding: 4px 8px;
-  border-radius: 4px;
-  cursor: pointer;
-}
-.controls button.active {
-  background: rgba(255,255,255,0.08);
-  border-color: rgba(255,255,255,0.22);
-}
+/* controls are intentionally hidden in the clean map UI */
 
 /* Minimal aircraft marker */
 .aircraft-marker {
@@ -99,3 +78,25 @@ body, html, #root {
 
 /* Make Leaflet popups look slightly cleaner */
 .leaflet-popup-content-wrapper { font-size: 12px; }
+
+.settings-toggle {
+  background: transparent;
+  color: #dbe9ff;
+  border: 1px solid rgba(255,255,255,0.08);
+  padding: 6px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.settings-panel {
+  position: absolute;
+  right: 12px;
+  top: 56px;
+  background: rgba(20,30,40,0.96);
+  color: #dbe9ff;
+  padding: 10px;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
+  z-index: 1200;
+}
+.settings-row { display:flex; gap:8px; align-items:center; margin-bottom:8px }
+.settings-row label { width: 80px; color:#cfe3ff }
