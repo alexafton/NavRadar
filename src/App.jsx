@@ -84,7 +84,7 @@ export default function App() {
     setStatus(s => ({ ...s, loading: true }));
 
     // helper to parse response into aircraft array
-    const parseStates = (res) => {
+      const parseStates = (res) => {
       const states = res.data?.states || [];
       const next = [];
       for (let i = 0; i < states.length; i++) {
@@ -111,17 +111,16 @@ export default function App() {
     // very short in-memory cache to reduce visible failures
     if (!fetchData._cache) fetchData._cache = { ts: 0, data: null };
     const CACHE_TTL = 5000; // ms
-    let res = null;
     const tryFetch = async (url, timeout) => {
       const r = await axios.get(url, { timeout });
       return r;
     };
 
     const bounds = map.getBounds();
-    const { _northEast, _southWest } = bounds;
-    const queryString = `lamin=${_southWest.lat}&lomin=${_southWest.lng}&lamax=${_northEast.lat}&lomax=${_northEast.lng}`;
-
-    let res = null;
+    // Use public API to get bounds in a robust way
+    const ne = bounds.getNorthEast();
+    const sw = bounds.getSouthWest();
+    const queryString = `lamin=${sw.lat}&lomin=${sw.lng}&lamax=${ne.lat}&lomax=${ne.lng}`;
     if (useProxy) {
       try {
         res = await tryFetch(`/api/opensky?${queryString}`, 8000);

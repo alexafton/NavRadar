@@ -50,8 +50,11 @@ export default function useMap() {
       canvasRef.current = { canvas, ctx, origin, ratio };
     }
 
-    resizeCanvas();
-    map.on('resize move zoom', resizeCanvas);
+  resizeCanvas();
+  // keep canvas transform updated during moves and zooms; using move and zoom events
+  map.on('resize move zoom viewreset', resizeCanvas);
+  // during zoom animations, update continuously for smoothness
+  map.on('zoomanim', resizeCanvas);
 
     return () => {
       map.off('resize move zoom', resizeCanvas);
